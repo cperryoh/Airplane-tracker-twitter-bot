@@ -3,6 +3,7 @@ using PuppeteerSharp;
 using System;
 using System.Collections.Generic;
 using System.ComponentModel;
+using System.Drawing;
 using System.IO;
 using System.Threading.Tasks;
 
@@ -15,6 +16,34 @@ namespace Flight_tracker
         Scheduled,
         Unknown
     };
+    class JetInfo
+    {
+        public string aircraft { get; set; }
+        public string op { get; set; }
+        public string airline { get; set; }
+        public override string ToString()
+        {
+            return $"Aircraft info\n---------\nAircraft: {aircraft}\nOperator: {op}\nAirline: {airline}\n";
+        }
+        static String clean(String str)
+        {
+            return str.Substring(2, str.Length - 4);
+        }
+        public static JetInfo getJetInfo(String page)
+        {
+            JetInfo info = new JetInfo();
+            HtmlDocument doc = new HtmlDocument();
+            doc.LoadHtml(page);
+            info.aircraft = doc.DocumentNode.SelectSingleNode("/html/body/div[7]/div[2]/section/section[2]/div[1]/div[1]/div[2]/div[1]/div[1]/span").InnerText;
+            info.op = doc.DocumentNode.SelectSingleNode("/html/body/div[7]/div[2]/section/section[2]/div[1]/div[1]/div[2]/div[1]/div[3]/span").InnerText;
+            info.airline = doc.DocumentNode.SelectSingleNode("/html/body/div[7]/div[2]/section/section[2]/div[1]/div[1]/div[2]/div[1]/div[2]/span/a").InnerText;
+
+            info.aircraft = clean(info.aircraft);
+            info.airline = clean(info.airline);
+            info.op = clean(info.op);
+            return info;
+        }
+    }
     class FlightInfo
     {
         public String landLocation;
@@ -24,34 +53,55 @@ namespace Flight_tracker
         public DateTime actualArrival;
         public DateTime actualDeparture;
         public Status status;
-        public override string ToString()
+        void printInColor(String str,ConsoleColor color)
         {
-            String str = "";
-            str += "Flight info\n-------------\n";
+            ConsoleColor temp = Console.ForegroundColor;
+            Console.ForegroundColor = color;
+            Console.Write(str);
+            Console.ForegroundColor = temp;
+        }
+        public void print()
+        {
+            printInColor("\nFlight info\n-------------\n",ConsoleColor.Cyan);
             if (!flightTime.Equals(null))
-                str += $"Flight time: {flightTime}\n";
+                Console.Write($"Flight time: {flightTime}\n");
 
-            str += $"Take off location: {takeOffLocation}\n";
-            str += $"Land location: {landLocation}\n";
+            Console.Write($"Take off location: {takeOffLocation}\n");
+            Console.Write($"Land location: {landLocation}\n");
 
-            str += $"Status: {status}\n";
+            switch (status) {
+                case Status.Airborne:
+                    Console.ForegroundColor = ConsoleColor.Red;
+                    break;
+                case Status.Laneded:
+                    Console.ForegroundColor = ConsoleColor.Green;
+                    break;
+                case Status.Scheduled:
+                    Console.ForegroundColor = ConsoleColor.Blue;
+                    break;
+                case Status.Unknown:
+                    Console.ForegroundColor = ConsoleColor.Yellow;
+                    break;
+            }
+
+            Console.Write($"Status: {status}\n");
+            Console.ForegroundColor = ConsoleColor.White;
 
             if (!actualArrival.Equals(DateTime.MinValue))
-                str += $"Actual Arrival time: {actualArrival.ToString("[MM/dd/yy] hh:mm tt")}\n";
+                Console.Write($"Actual Arrival time: {actualArrival.ToString("[MM/dd/yy] hh:mm tt")}\n");
 
             if (!scheduledArrival.Equals(DateTime.MinValue))
-                str += $"Scheduled Arrival time: {scheduledArrival.ToString("[MM/dd/yy] hh:mm tt")}\n";
+                Console.Write($"Scheduled Arrival time: {scheduledArrival.ToString("[MM/dd/yy] hh:mm tt")}\n");
 
             if (!actualDeparture.Equals(DateTime.MinValue))
-                str += $"Departure time: {actualDeparture.ToString("[MM/dd/yy] hh:mm tt")}\n";
+                Console.Write($"Departure time: {actualDeparture.ToString("[MM/dd/yy] hh:mm tt")}\n");
 
             if (status == Status.Airborne)
             {
                 DateTime now = getUTC(DateTime.Now);
                 TimeSpan dif = scheduledArrival.Subtract(now);
-                str += $"Time till land(hrs:min): {dif.Hours}:{dif.Minutes}\n";
+                Console.Write($"Time till land(hrs:min): {dif.Hours}:{dif.Minutes}\n");
             }
-            return str;
         }
         public DateTime getUTC(DateTime time)
         {
@@ -155,6 +205,8 @@ namespace Flight_tracker
         {
             String page = (await FetchPageAsync(url));
             HtmlDocument doc = new HtmlDocument();
+            JetInfo jet = JetInfo.getJetInfo(page);
+            Console.WriteLine(jet);
             doc.LoadHtml(page);
             List<FlightInfo> flightList = new List<FlightInfo>();
             var tables = doc.DocumentNode.SelectNodes("//tr[contains(@class,'data-row')]");
@@ -224,6 +276,8 @@ namespace Flight_tracker
             }
             if (liveNode != null)
                 flightList.Add(getLiveData(liveNode));
+            Comparison<FlightInfo> comparison = (x, y) => DateTime.Compare(x.scheduledArrival, y.scheduledArrival);
+            flightList.Sort(comparison);
             return flightList;
         }
         static FlightInfo cleanUpFlightInfo(FlightInfo info)
@@ -251,25 +305,23 @@ namespace Flight_tracker
         }
         static void Main(string[] args)
         {
-            String reg = "F-HSKY";
+            String reg = "RA-96022";
             String curDir = Directory.GetCurrentDirectory();
 
             String[] open = File.ReadAllLines(curDir + "\\bigfunny.txt");
             writeLines(open);
             var info = fetchAllFlights("https://" + $"www.flightradar24.com/data/aircraft/{reg}").GetAwaiter().GetResult();
-
             foreach (FlightInfo f in info)
             {
-                Console.WriteLine(f.ToString());
+                f.print();
             }
         }
         public static async Task<String> FetchPageAsync(String url)
         {
-            String[] str = new string[1];
-            Browser browser = await Puppeteer.LaunchAsync(new LaunchOptions
-            {
-                Headless = false
-            });
+            LaunchOptions ops = new LaunchOptions();
+            ops.UserDataDir = Directory.GetCurrentDirectory() + "\\cache";
+            ops.Headless = false;
+            Browser browser = await Puppeteer.LaunchAsync(ops);
 
             var page = await browser.NewPageAsync();
 
@@ -285,6 +337,7 @@ namespace Flight_tracker
             v.Height = 1000;
             await page.SetViewportAsync(v);
             await page.GoToAsync(url, navigation);
+            await page.SetCacheEnabledAsync(true);
 
             await page.SetJavaScriptEnabledAsync(true);
             await page.ClickAsync("button[data-testid='cookie-consent-bar-close']");
@@ -294,7 +347,7 @@ namespace Flight_tracker
             await page.ClickAsync("li[id='fr24_SettingsMenu']");
             //await page.ReloadAsync();
             String value = await page.GetContentAsync();
-            await browser.CloseAsync();
+            // browser.CloseAsync();
             return value;
         }
     }
